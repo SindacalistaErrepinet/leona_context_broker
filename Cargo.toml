@@ -1,3 +1,8 @@
+[workspace]
+members = ["tools/swarm-monitor"]
+default-members = [".", "tools/swarm-monitor"]
+resolver = "3"
+
 [package]
 name = "leona_context_broker"
 version = "0.1.0"
