@@ -1,29 +1,31 @@
 # AGENTS.md
 
 ## Response Style
-- User-facing replies stay terse "smart caveman". Switch to normal wording for security warnings, irreversible actions, and code/commit/PR text.
+- Chat replies: load caveman skill (`.agents/skills/caveman/SKILL.md`), terse "smart caveman". Code, comments, commits, docs: normal prose.
 
 ## Verify
-- No repo CI/workflow files. Pre-handoff check: `cargo fmt --check && cargo test`.
+- Pre-handoff: `cargo fmt --check && cargo test`. Verified: 34 tests pass, no external services needed.
+- Single test: `cargo test <filter>`.
 
 ## Run
-- `cargo run` expects MongoDB and Redis already up. Startup connects to Mongo, creates indexes, and starts Redis Stream worker immediately.
-- Config comes from `std::env`. `.env.example` is reference only; `.env` is gitignored but not auto-loaded.
-- Use broker base URLs ending in `/ngsi-ld/v1` for `BROKER_PUBLIC_ENDPOINT` and `BROKER_P2P_SEEDS`. Internal broker sync routes now live at root paths such as `/internal/swim`.
+- `cargo run` needs DefraDB up at `BROKER_DEFRADB_URL` (default `http://127.0.0.1:9181/api/v0/graphql`). No MongoDB, no Redis.
+- Broker never creates DefraDB collections. Required collections must pre-exist: `EntityRecord`, `TemporalRecord`, `SubscriptionRecord`, `EntityMutationRecord`. `scripts/bootstrap_swarm.sh` creates them for the swarm; create manually for local runs.
+- Config from `std::env`; `.env` is not auto-loaded, `.env.example` is reference only.
+- Full 10-node swarm: `docker-compose.yml` + `tests/swarm_integration.sh`.
 
 ## Architecture
-- `src/api.rs` only wires Actix routes. Real behavior lives in `src/services/*`; Mongo filter building lives in `src/query/planner.rs`; tenant/`Link`/`Via` handling lives in `src/context/headers.rs`.
-- Persisted entities are wrappers, not raw NGSI-LD payloads: entities use `{ tenant, id, doc }`; temporals use `{ tenant, id, doc, history }`. Mongo filters/indexes use top-level `id` plus nested `doc.*` fields.
-- Every repository key/index includes `tenant`. `NGSILD-Tenant` defaults to `default`; forgetting tenant filters causes cross-tenant bugs.
-- `Link` header backfills `@context` only when payload lacks it. `Via` header is federation/P2P loop-avoidance state; preserve and extend it when changing forwarding code.
-- `services::entities::{query,get}` read local Mongo only. Write paths persist locally first, then enqueue notifications and swarm side effects.
-- Geo queries can target arbitrary `geoproperty`, but startup creates 2dsphere index only for `doc.location.value`.
-
-## P2P And Delivery Quirks
-- Runtime launches `services::federation::start_swarm_sync_worker` at startup.
-- Current P2P model is SWIM-only. Redis stays internal; broker-to-broker sync uses root-level internal endpoints `/internal/swim` and `/internal/swim/mutations`.
-- `RedisEventQueue` ACKs stream messages after each processing attempt, even failures. Current outbound SWIM/notification delivery is best-effort; no retry/dead-letter flow.
+- `src/api.rs` wires Actix routes only; behavior lives in `src/services/*`; query planning in `src/query/planner.rs`; tenant/`Link`/`Via` in `src/context/headers.rs`.
+- Storage is DefraDB GraphQL, not raw NGSI-LD. Wrappers: entity/subscription `{ tenant, id, doc }`; temporal adds `history`. DefraDB rows keep `doc`/history as encoded JSON strings in `payload`/`historyJson`.
+- Repository traits in `src/persistence/repository.rs`; runtime impl `defradb.rs`; tests use `memory.rs`.
+- Every repository key is tenant-scoped. `NGSILD-Tenant` defaults to `default`; missing tenant filter causes cross-tenant bugs.
+- `Link` backfills `@context` only when payload lacks it. `Via` is forwarding/loop-avoidance metadata; preserve and extend it.
+- Write path: persist locally, append `EntityMutationRecord`, deliver local subscriptions inline. Delivery is best-effort; no retry/backoff/dead-letter.
+- Cross-node: DefraDB P2P replicates `EntityRecord` + `EntityMutationRecord` only; `SubscriptionRecord` must stay local. `src/app/entity_watch.rs` fast watcher polls the mutation log, dedupes `event_id`, skips own `origin_broker_id`; snapshot watcher is slower fallback.
+- `/internal/entities/batch` is root-level (no `/ngsi-ld/v1` prefix) and unauthenticated; used for large create batches only. `BROKER_P2P_SEEDS` are public `/ngsi-ld/v1` endpoints; code strips the suffix and appends the internal path.
 
 ## Tests
-- API tests mirror `api::tests::test_state()`: `AppConfig::for_tests()`, `p2p_enabled = false`, `InMemoryEventQueue`, `MongoRepositories::new_without_indexes()`.
-- `cargo test` still needs MongoDB on `127.0.0.1:27017` for API/swarm-mutation tests. Redis is not required by current test suite.
+- Unit/API tests use in-memory repos via `api::tests::test_state()` (`AppConfig::for_tests()`, `memory::repositories()`). No services needed.
+- Live swarm test ignored by default: `bash tests/swarm_integration.sh` (docker-compose, 10 DefraDB + 10 broker + sink). `KEEP_SWARM=1` keeps containers.
+
+## Stale Docs
+- `IMPLEMENTATION_STATUS.md` describes an old MongoDB/SWIM design; trust code and `README.md`. README route list may lag `src/api.rs`.
