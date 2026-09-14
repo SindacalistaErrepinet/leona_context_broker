@@ -20,9 +20,12 @@ Expected result:
 
 The live swarm test starts:
 
-- 10 DefraDB nodes
-- 10 broker nodes
+- 10 combined node containers, each running DefraDB plus the broker
 - one HTTP notification sink
+
+The script builds the debug node image from `docker/Dockerfile.test`. Override
+with `SWARM_DOCKERFILE=docker/Dockerfile` and `SWARM_NODE_IMAGE=leona-swarm-node:latest`
+to run the release image.
 
 Run:
 
@@ -98,8 +101,8 @@ KEEP_SWARM=1 bash tests/swarm_integration.sh
 Inspect logs:
 
 ```bash
-docker-compose -f docker-compose.yml -p leona-swarm logs broker1
-docker-compose -f docker-compose.yml -p leona-swarm logs defra1
+docker compose -f docker-compose.yml -p leona-swarm logs node1
+docker compose -f docker-compose.yml -p leona-swarm exec node1 defradb client p2p info --url 127.0.0.1:9181
 ```
 
 Remove swarm containers and volumes:
@@ -117,3 +120,28 @@ Successful live test ends with:
 ```
 
 Metric paths are printed at end of script.
+
+## Swarm Monitor Checks
+
+Start swarm plus dashboard in one step:
+
+```bash
+bash scripts/start_local_swarm.sh
+```
+
+`SKIP_MONITOR=1` starts only the environment; `SWARM_DOWN_ON_EXIT=1` removes it when the monitor exits.
+
+With the swarm already running, start the dashboard directly:
+
+```bash
+cargo run -p leona-swarm-monitor -- --defradb http://127.0.0.1:19181 --broker http://127.0.0.1:18081
+```
+
+Verify:
+
+- all 10 DefraDB nodes and 10 brokers appear within a few poll cycles
+- `Topology` shows p2p and replicator edges for `EntityRecord` and `EntityMutationRecord`
+- `Nodes` shows broker counters from `GET /internal/stats`
+- `Traffic` counters increase after sending a payload with `s` or writing entities through the API
+- stopping a node marks it offline, then removes it after `--offline-grace` cycles
+- restarting the node makes it reappear through DefraDB P2P discovery

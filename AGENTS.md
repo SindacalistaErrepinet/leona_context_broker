@@ -4,14 +4,17 @@
 - Chat replies: load caveman skill (`.agents/skills/caveman/SKILL.md`), terse "smart caveman". Code, comments, commits, docs: normal prose.
 
 ## Verify
-- Pre-handoff: `cargo fmt --check && cargo test`. Verified: 34 tests pass, no external services needed.
-- Single test: `cargo test <filter>`.
+- Pre-handoff: `cargo fmt --check && cargo test` (workspace: broker + `tools/swarm-monitor`). No external services needed.
+- Single test: `cargo test <filter>`; package-scoped: `cargo test -p leona_context_broker` / `-p leona-swarm-monitor`.
 
 ## Run
 - `cargo run` needs DefraDB up at `BROKER_DEFRADB_URL` (default `http://127.0.0.1:9181/api/v0/graphql`). No MongoDB, no Redis.
 - Broker never creates DefraDB collections. Required collections must pre-exist: `EntityRecord`, `TemporalRecord`, `SubscriptionRecord`, `EntityMutationRecord`. `scripts/bootstrap_swarm.sh` creates them for the swarm; create manually for local runs.
 - Config from `std::env`; `.env` is not auto-loaded, `.env.example` is reference only.
-- Full 10-node swarm: `docker-compose.yml` + `tests/swarm_integration.sh`.
+- Full 10-node swarm: `docker-compose.yml` (combined DefraDB+broker node image) + `tests/swarm_integration.sh`.
+- Node images: `docker/Dockerfile` (release) and `docker/Dockerfile.test` (debug, used by swarm test via `SWARM_DOCKERFILE`/`SWARM_NODE_IMAGE`). Nodes publish `1808N:8080` and `1918N:9181`.
+- Local env + monitor: `bash scripts/start_local_swarm.sh` (builds debug node image, starts swarm, bootstraps P2P, opens TUI). `SKIP_MONITOR=1` starts env only; `SWARM_DOWN_ON_EXIT=1` tears down on exit.
+- Monitor: `cargo run -p leona-swarm-monitor -- --defradb http://127.0.0.1:19181 --broker http://127.0.0.1:18081`. DefraDB P2P drives discovery; broker URLs derived from co-located node or `--broker` seeds.
 
 ## Architecture
 - `src/api.rs` wires Actix routes only; behavior lives in `src/services/*`; query planning in `src/query/planner.rs`; tenant/`Link`/`Via` in `src/context/headers.rs`.
@@ -22,10 +25,12 @@
 - Write path: persist locally, append `EntityMutationRecord`, deliver local subscriptions inline. Delivery is best-effort; no retry/backoff/dead-letter.
 - Cross-node: DefraDB P2P replicates `EntityRecord` + `EntityMutationRecord` only; `SubscriptionRecord` must stay local. `src/app/entity_watch.rs` fast watcher polls the mutation log, dedupes `event_id`, skips own `origin_broker_id`; snapshot watcher is slower fallback.
 - `/internal/entities/batch` is root-level (no `/ngsi-ld/v1` prefix) and unauthenticated; used for large create batches only. `BROKER_P2P_SEEDS` are public `/ngsi-ld/v1` endpoints; code strips the suffix and appends the internal path.
+- `src/app/stats.rs` holds process-local counters; `GET /internal/stats` (root-level, unauthenticated) exposes broker id, DefraDB peer id, seeds, global counters, and per-peer exchange counters. `X-Leona-Broker-Id` attributes inbound peer batches.
+- `tools/swarm-monitor` is a ratatui TUI. Discovery: `/api/v0/p2p/info`, `/p2p/active-peers`, `/p2p/replicators` multiaddrs plus broker `/internal/stats`; loopback DefraDB seeds need explicit `--broker` seeds.
 
 ## Tests
 - Unit/API tests use in-memory repos via `api::tests::test_state()` (`AppConfig::for_tests()`, `memory::repositories()`). No services needed.
-- Live swarm test ignored by default: `bash tests/swarm_integration.sh` (docker-compose, 10 DefraDB + 10 broker + sink). `KEEP_SWARM=1` keeps containers.
+- Live swarm test ignored by default: `bash tests/swarm_integration.sh` (docker compose, 10 combined nodes + sink). `KEEP_SWARM=1` keeps containers.
 
 ## Stale Docs
 - `IMPLEMENTATION_STATUS.md` describes an old MongoDB/SWIM design; trust code and `README.md`. README route list may lag `src/api.rs`.

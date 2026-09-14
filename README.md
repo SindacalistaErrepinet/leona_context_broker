@@ -8,6 +8,7 @@ Current runtime pieces:
 - DefraDB GraphQL endpoint for persisted entities, temporal entities, and subscriptions
 - direct local HTTP delivery for subscription notifications
 - replicated entity mutation log for near-realtime cross-node notification fan-out
+- `tools/swarm-monitor`: ratatui TUI for swarm connections and data exchange
 
 The codebase is being aligned to the ETSI NGSI-LD API surface:
 
@@ -26,6 +27,8 @@ This repository no longer uses in-memory-only storage. It now uses DefraDB-backe
 - `src/query`: entity and temporal query DTOs plus backend-neutral query planning
 - `src/services`: entity, temporal, subscription, notification, and discovery logic
 - `src/utils`: JSON and time helpers
+- `tools/swarm-monitor`: ratatui dashboard crate (DefraDB P2P discovery plus broker stats)
+- `docker/Dockerfile` / `docker/Dockerfile.test`: combined DefraDB + broker node images
 
 ## How It Works
 
@@ -119,6 +122,11 @@ Runtime behavior:
 - `GET /ngsi-ld/v1/attributes/{attrId}`
 - `GET /ngsi-ld/v1/info/sourceIdentity`
 
+Internal root-level routes (no `/ngsi-ld/v1` prefix, unauthenticated):
+
+- `POST /internal/entities/batch`: peer broker snapshot sync
+- `GET /internal/stats`: broker counters and per-peer exchange stats for the swarm monitor
+
 ## Query Support
 
 Implemented entity query features:
@@ -199,6 +207,50 @@ http://127.0.0.1:8080/api-docs/openapi.json
 http://127.0.0.1:8080/swagger-ui/
 ```
 
+## Swarm Monitor
+
+The workspace includes a ratatui dashboard that discovers swarm nodes through
+DefraDB P2P APIs and reads broker counters from `/internal/stats`.
+
+Quick start: build the debug node image, start the 10-node swarm, bootstrap P2P,
+and open the monitor:
+
+```bash
+bash scripts/start_local_swarm.sh
+```
+
+Environment switches:
+
+- `SKIP_MONITOR=1`: start the swarm only
+- `SWARM_DOWN_ON_EXIT=1`: stop and remove the swarm when the monitor exits
+- `SWARM_DOCKERFILE` / `SWARM_NODE_IMAGE`: use another node image (defaults to the debug test image)
+
+Manual start against an already running swarm:
+
+```bash
+cargo run -p leona-swarm-monitor -- \
+  --defradb http://127.0.0.1:19181 \
+  --broker http://127.0.0.1:18081
+```
+
+Discovery rules:
+
+- DefraDB nodes are crawled recursively from `/api/v0/p2p/info`, `/api/v0/p2p/active-peers`, and `/api/v0/p2p/replicators` multiaddrs.
+- Each discovered DefraDB node maps to a co-located broker on `--broker-port` (default `8080`) when its address is not loopback.
+- Loopback DefraDB seeds need explicit `--broker` seeds because published host ports do not match container ports.
+
+Views:
+
+- `Topology`: node mini-map plus edge table (`p2p`, `replicator`, `storage`, `broker`).
+- `Nodes`: DefraDB and broker node table with status, uptime, writes, mutations, notifications.
+- `Traffic`: aggregate mutation rate sparkline plus per-broker and per-peer byte/document counters.
+- `Events`: discovery, offline, and payload-send log.
+
+Keys: `q` quit, `Tab` switch view, `up/down` select, `s` send generated test entity to selected broker,
+`e` edit payload (`Enter` sends, `Esc` cancels), `p` pause polling, `?` help.
+
+Options: `--poll-ms`, `--timeout-ms`, `--offline-grace`, `--defradb-http-port`, `--broker-port`.
+
 ## Test
 
 Run:
@@ -226,18 +278,22 @@ Current automated coverage includes:
 - temporal filtering and aggregation helpers
 - notification matching and delivery behavior
 - handler-level validation responses for bad requests
+- broker stats counters and `/internal/stats` snapshot shape
+- swarm monitor multiaddr parsing, discovery edges, rate math, and TUI render smoke test
 - live 10-node DefraDB P2P entity replication plus cross-node notification delivery with subscriptions remaining local via `tests/swarm_integration.sh`
 
 Swarm test details:
 
-- uses `docker-compose.yml` to start 10 DefraDB nodes, 10 broker nodes, and one HTTP notification sink
+- uses `docker-compose.yml` to start 10 combined nodes (DefraDB + broker per container) and one HTTP notification sink
+- builds the debug node image from `docker/Dockerfile.test` (`SWARM_DOCKERFILE`/`SWARM_NODE_IMAGE` override the release image)
+- each node publishes `1808N:8080` (broker) and `1918N:9181` (DefraDB API)
 - keeps subscriptions local to each broker and proves they are not visible from other brokers
 - DefraDB P2P is enabled for `EntityRecord` and `EntityMutationRecord`; `SubscriptionRecord` is never added to pubsub or replicators
-- verifies create from `broker1`, update from `broker5`, and delete from `broker9`
+- verifies create from `node1`, update from `node5`, and delete from `node9`
 - asserts every broker observes replicated entity state and emits one local notification for each lifecycle step
 - measures per-node data propagation time and compares it with notification receipt time for create, update, and delete
 - runs concurrent inserts from all 10 brokers and validates both final consistency and propagation/notification latency distributions
-- uses existing host `target/debug/leona_context_broker` binary and builds it automatically if missing
+- compose sets `BROKER_DEFRADB_TIMEOUT_MS=120000` so the 5000-entity burst survives DefraDB CPU saturation on a single host
 - set `KEEP_SWARM=1` to inspect running containers after the script exits
 
 Subscription storage policy:
