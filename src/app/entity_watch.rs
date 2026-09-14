@@ -117,6 +117,13 @@ async fn entity_event_watch_loop(state: AppState, interval: Duration) -> Result<
                         continue;
                     }
 
+                    let mutation_bytes = serde_json::to_vec(&event.payload)
+                        .map(|value| value.len() as u64)
+                        .unwrap_or(0);
+                    state
+                        .stats
+                        .record_remote_mutations(&event.origin_broker_id, 1, mutation_bytes);
+
                     let entity_key = key(&event.tenant, &event.entity_id);
                     let current_document = match event.operation {
                         EntityMutationOperation::Deleted => None,

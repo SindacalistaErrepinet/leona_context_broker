@@ -5,10 +5,12 @@ use std::{
 };
 
 use reqwest::Client;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::{
-    app::entity_watch::EntityWatchState, config::AppConfig, error::BrokerError,
+    app::{entity_watch::EntityWatchState, stats::Stats},
+    config::AppConfig,
+    error::BrokerError,
     persistence::repository::Repositories,
 };
 
@@ -27,6 +29,10 @@ pub struct AppState {
     pub entity_watch: EntityWatchState,
     /// Serializes bulk entity writes hitting same local DefraDB node.
     pub entity_write_lock: Arc<Mutex<()>>,
+    /// Process-local observability counters.
+    pub stats: Arc<Stats>,
+    /// Cached local DefraDB P2P peer id when reachable.
+    pub defradb_peer_id: Arc<OnceCell<String>>,
 }
 
 impl AppState {
@@ -46,6 +52,8 @@ impl AppState {
             started_at: Instant::now(),
             entity_watch: EntityWatchState::default(),
             entity_write_lock: Arc::new(Mutex::new(())),
+            stats: Arc::new(Stats::default()),
+            defradb_peer_id: Arc::new(OnceCell::new()),
         })
     }
 }

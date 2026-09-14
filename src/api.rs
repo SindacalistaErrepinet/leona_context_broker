@@ -14,7 +14,7 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
-    app::state::AppState,
+    app::{state::AppState, stats::HEADER_ORIGIN_BROKER},
     context::headers::{HEADER_RESULTS_COUNT, HEADER_TENANT, RequestContext},
     domain::{
         batch::{BatchOperationResult, UpdateResult},
@@ -256,16 +256,33 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route("/attributes/{attrId}", web::get().to(get_attribute))
             .route("/info/sourceIdentity", web::get().to(get_source_identity)),
     )
-    .service(web::scope("/internal").route("/entities/batch", web::post().to(sync_entities_batch)));
+    .service(
+        web::scope("/internal")
+            .route("/entities/batch", web::post().to(sync_entities_batch))
+            .route("/stats", web::get().to(internal_stats)),
+    );
 }
 
 /// Handles internal broker-to-broker entity snapshot batches.
 async fn sync_entities_batch(
     state: web::Data<AppState>,
+    request: HttpRequest,
     body: web::Json<Vec<StoredDocument>>,
 ) -> Result<HttpResponse, BrokerError> {
-    entities::apply_peer_entity_batch(state.get_ref(), body.into_inner()).await?;
+    let origin = request
+        .headers()
+        .get(HEADER_ORIGIN_BROKER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+    entities::apply_peer_entity_batch(state.get_ref(), body.into_inner(), &origin).await?;
     Ok(HttpResponse::NoContent().finish())
+}
+
+/// Handles internal swarm statistics requests.
+async fn internal_stats(state: web::Data<AppState>) -> Result<HttpResponse, BrokerError> {
+    Ok(HttpResponse::Ok().json(crate::app::stats::snapshot(state.get_ref())))
 }
 
 #[utoipa::path(
@@ -1828,6 +1845,39 @@ mod tests {
             normalize_query_string("limit=10"),
             Some("limit=10".to_string())
         );
+    }
+
+    #[actix_web::test]
+    async fn internal_stats_reports_counters_and_identity() {
+        let state = test_state();
+        let app = test::init_service(App::new().app_data(state.clone()).configure(configure)).await;
+
+        let create = test::TestRequest::post()
+            .uri("/ngsi-ld/v1/entities")
+            .set_json(json!({
+                "id": "urn:ngsi-ld:Vehicle:stats-1",
+                "type": "Vehicle",
+                "speed": {"type": "Property", "value": 42}
+            }))
+            .to_request();
+        let response = test::call_service(&app, create).await;
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let request = test::TestRequest::get().uri("/internal/stats").to_request();
+        let response = test::call_service(&app, request).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_body(response).await;
+        assert_eq!(body["broker_id"], "test-broker");
+        assert_eq!(body["counters"]["entities_created"], 1);
+        assert_eq!(body["counters"]["mutations_appended"], 1);
+        assert!(
+            body["counters"]["mutation_bytes_appended"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert!(body["defradb_peer_id"].is_null());
     }
 
     #[actix_web::test]

@@ -29,7 +29,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    app::state::AppState,
+    app::{state::AppState, stats::HEADER_ORIGIN_BROKER},
     context::headers::RequestContext,
     domain::{
         batch::{BatchEntityError, BatchOperationResult, NotUpdatedDetails, UpdateResult},
@@ -795,7 +795,16 @@ pub async fn batch_create(
 pub async fn apply_peer_entity_batch(
     state: &AppState,
     documents: Vec<StoredDocument>,
+    origin: &str,
 ) -> Result<(), BrokerError> {
+    let received_docs = documents.len() as u64;
+    let received_bytes = serde_json::to_vec(&documents)
+        .map(|value| value.len() as u64)
+        .unwrap_or(0);
+    state
+        .stats
+        .record_peer_batch_received(origin, received_docs, received_bytes);
+
     let mut by_tenant: HashMap<String, Vec<StoredDocument>> = HashMap::new();
     for document in documents {
         by_tenant
@@ -901,9 +910,17 @@ fn spawn_peer_entity_batch_sync(state: &AppState, tenant: &str, docs: &[(String,
         })
         .collect::<Vec<_>>();
     let timeout = Duration::from_millis(state.config.peer_sync_timeout_ms);
+    let stats = state.stats.clone();
+    let broker_id = state.config.broker_id.clone();
+    let docs_sent = documents.len() as u64;
+    let bytes_sent = serde_json::to_vec(&documents)
+        .map(|value| value.len() as u64)
+        .unwrap_or(0);
 
     for url in urls {
         let documents = documents.clone();
+        let stats = stats.clone();
+        let broker_id = broker_id.clone();
         tokio::spawn(async move {
             let client = match reqwest::Client::builder().timeout(timeout).build() {
                 Ok(client) => client,
@@ -912,7 +929,13 @@ fn spawn_peer_entity_batch_sync(state: &AppState, tenant: &str, docs: &[(String,
                     return;
                 }
             };
-            match client.post(&url).json(&documents).send().await {
+            match client
+                .post(&url)
+                .header(HEADER_ORIGIN_BROKER, &broker_id)
+                .json(&documents)
+                .send()
+                .await
+            {
                 Ok(response) if !response.status().is_success() => {
                     let status = response.status();
                     let body = response.text().await.unwrap_or_default();
@@ -924,7 +947,7 @@ fn spawn_peer_entity_batch_sync(state: &AppState, tenant: &str, docs: &[(String,
                     );
                 }
                 Err(error) => warn!("peer entity batch sync to {url} failed: {error}"),
-                Ok(_) => {}
+                Ok(_) => stats.record_peer_batch_sent(&url, docs_sent, bytes_sent),
             }
         });
     }
@@ -1310,11 +1333,14 @@ async fn enqueue_local_notifications(
             .record_local_upsert(tenant, entity_id, entity),
     }
 
-    if let Err(error) = append_entity_mutation(state, tenant, entity_id, entity, &event).await {
-        warn!(
+    state.stats.record_entity_event(event.kind);
+
+    match append_entity_mutation(state, tenant, entity_id, entity, &event).await {
+        Ok(bytes) => state.stats.record_mutations_appended(1, bytes),
+        Err(error) => warn!(
             "failed appending entity mutation for {} in tenant {}: {}",
             entity_id, tenant, error
-        );
+        ),
     }
     notifications::enqueue_notifications(state, tenant, entity, &event).await
 }
@@ -1328,6 +1354,7 @@ async fn enqueue_local_notifications_batch(
     let append_mutation_log = events.len() <= MUTATION_LOG_BATCH_EVENT_LIMIT;
     let mut mutations = Vec::with_capacity(if append_mutation_log { events.len() } else { 0 });
     for (entity_id, entity, event) in events {
+        state.stats.record_entity_event(event.kind);
         match event.kind {
             EntityEventKind::Deleted => state.entity_watch.record_local_delete(tenant, entity_id),
             EntityEventKind::Created | EntityEventKind::Updated => state
@@ -1343,13 +1370,27 @@ async fn enqueue_local_notifications_batch(
     }
 
     if append_mutation_log {
-        if let Err(error) = state
+        let mutation_count = mutations.len() as u64;
+        let mutation_bytes = mutations
+            .iter()
+            .map(|mutation| {
+                serde_json::to_vec(&mutation.payload)
+                    .map(|value| value.len() as u64)
+                    .unwrap_or(0)
+            })
+            .sum();
+        match state
             .repositories
             .entity_mutations
             .insert_many(mutations)
             .await
         {
-            warn!("failed appending entity mutation batch in tenant {tenant}: {error}");
+            Ok(()) => state
+                .stats
+                .record_mutations_appended(mutation_count, mutation_bytes),
+            Err(error) => {
+                warn!("failed appending entity mutation batch in tenant {tenant}: {error}")
+            }
         }
     } else {
         info!(
@@ -1373,7 +1414,7 @@ async fn append_entity_mutation(
     entity_id: &str,
     entity: &Value,
     event: &EntityEvent,
-) -> Result<(), BrokerError> {
+) -> Result<u64, BrokerError> {
     state
         .repositories
         .entity_mutations
@@ -1385,7 +1426,10 @@ async fn append_entity_mutation(
             event,
             now_timestamp_millis(),
         ))
-        .await
+        .await?;
+    Ok(serde_json::to_vec(entity)
+        .map(|value| value.len() as u64)
+        .unwrap_or(0))
 }
 
 fn entity_mutation_document(

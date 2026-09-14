@@ -133,6 +133,7 @@ async fn deliver_notifications(
             .as_ref()
             .map(|response| response.status().is_success())
             .unwrap_or(false);
+        state.stats.record_notification_attempt(success);
         let entry = delivery_counts
             .entry(subscription_id.to_string())
             .or_insert((0_u64, 0_u64));

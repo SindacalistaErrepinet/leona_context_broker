@@ -51,6 +51,7 @@ pub async fn upsert(
             history,
         })
         .await?;
+    state.stats.record_temporal_write();
 
     Ok((entity_id, created))
 }
