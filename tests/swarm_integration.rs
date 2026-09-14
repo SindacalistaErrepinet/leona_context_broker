@@ -1,7 +1,7 @@
 use std::process::Command;
 
 #[test]
-#[ignore = "requires docker-compose and builds a 10-node swarm"]
+#[ignore = "requires docker and builds a 10-node combined swarm"]
 fn swarm_replication_and_notifications() {
     let status = Command::new("bash")
         .arg("tests/swarm_integration.sh")

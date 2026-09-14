@@ -20,9 +20,17 @@ SINK_URL="http://127.0.0.1:19080"
 ARTIFACT_DIR="$ROOT_DIR/tests/artifacts"
 METRIC_JSON_PATH="$ARTIFACT_DIR/swarm_metrics.json"
 METRIC_CSV_PATH="$ARTIFACT_DIR/swarm_metrics.csv"
-COMPOSE=(docker-compose -f "$ROOT_DIR/docker-compose.yml" -p "$PROJECT_NAME")
-DEFRA_SERVICES=()
-BROKER_SERVICES=()
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose -f "$ROOT_DIR/docker-compose.yml" -p "$PROJECT_NAME")
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE=(docker-compose -f "$ROOT_DIR/docker-compose.yml" -p "$PROJECT_NAME")
+else
+  printf 'docker compose (v2 plugin) or docker-compose (v1) is required\n' >&2
+  exit 1
+fi
+export SWARM_DOCKERFILE="${SWARM_DOCKERFILE:-docker/Dockerfile.test}"
+export SWARM_NODE_IMAGE="${SWARM_NODE_IMAGE:-leona-swarm-node:test}"
+NODE_SERVICES=()
 declare -A CHANNEL_BASELINE_COUNTS=()
 declare -A SEQUENTIAL_READ_LATENCY_MS=()
 declare -A SEQUENTIAL_NOTIFICATION_LATENCY_MS=()
@@ -32,8 +40,7 @@ declare -A CONCURRENT_NOTIFICATION_LATENCY_MS=()
 declare -A METRIC_VALUES=()
 
 for index in $(seq 1 "$BROKER_COUNT"); do
-  DEFRA_SERVICES+=("defra${index}")
-  BROKER_SERVICES+=("broker${index}")
+  NODE_SERVICES+=("node${index}")
 done
 
 cleanup() {
@@ -77,7 +84,10 @@ urlencode() {
 }
 
 now_ms() {
-  date +%s%3N
+  local nanoseconds
+
+  nanoseconds="$(date +%s%N)"
+  printf '%s' "$((nanoseconds / 1000000))"
 }
 
 reset_metric_artifacts() {
@@ -1033,21 +1043,18 @@ delete_entity() {
 }
 
 printf 'Starting 10-node swarm stack\n'
-printf 'Building broker binary on host\n'
-cargo build >/dev/null
+printf 'Building swarm node image %s from %s\n' "$SWARM_NODE_IMAGE" "$SWARM_DOCKERFILE"
 
 reset_metric_artifacts
 
 "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-"${COMPOSE[@]}" up -d sink "${DEFRA_SERVICES[@]}"
+"${COMPOSE[@]}" build "${NODE_SERVICES[@]}"
+"${COMPOSE[@]}" up -d sink "${NODE_SERVICES[@]}"
 
 wait_until 'notification sink' 60 sink_ready
 
 printf 'Bootstrapping DefraDB P2P swarm\n'
 bash "$ROOT_DIR/scripts/bootstrap_swarm.sh"
-
-printf 'Starting broker nodes\n'
-"${COMPOSE[@]}" up -d "${BROKER_SERVICES[@]}"
 
 for index in $(seq 1 "$BROKER_COUNT"); do
   wait_until "broker${index}" 180 broker_ready "$index"
