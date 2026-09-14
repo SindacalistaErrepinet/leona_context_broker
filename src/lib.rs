@@ -1,4 +1,4 @@
-//! Cognets broker library crate.
+//! Leona Context Broker library crate.
 //!
 //! Modules are split by concern: HTTP wiring in `api`, shared state in `app`,
 //! request parsing in `context` and `query`, storage adapters in

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_NAME="${SWARM_PROJECT:-cognets-swarm}"
+PROJECT_NAME="${SWARM_PROJECT:-leona-swarm}"
 COMPOSE=(docker-compose -f "$ROOT_DIR/docker-compose.yml" -p "$PROJECT_NAME")
 DEFRA_SERVICES=()
 

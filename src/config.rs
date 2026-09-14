@@ -39,7 +39,7 @@ impl AppConfig {
     pub fn from_env() -> Self {
         let host = env_or("BROKER_HOST", "127.0.0.1");
         let port = env_or("BROKER_PORT", "8080").parse().unwrap_or(8080);
-        let broker_id = env_or("BROKER_ID", "cognets-broker");
+        let broker_id = env_or("BROKER_ID", "leona-context-broker");
         let public_endpoint = env_or(
             "BROKER_PUBLIC_ENDPOINT",
             &format!("http://{host}:{port}/ngsi-ld/v1"),

@@ -18,7 +18,7 @@ x-defradb-service: &defradb-service
 
 x-broker-service: &broker-service
   image: debian:bookworm-slim
-  command: ["/usr/local/bin/cognets_broker"]
+  command: ["/usr/local/bin/leona_context_broker"]
   environment: &broker-env
     RUST_LOG: info
     BROKER_HOST: 0.0.0.0
@@ -33,7 +33,7 @@ x-broker-service: &broker-service
     BROKER_ENTITY_WATCH_ENABLED: "true"
     BROKER_ENTITY_WATCH_INTERVAL_MS: 30000
   volumes:
-    - ./target/debug/cognets_broker:/usr/local/bin/cognets_broker:ro
+    - ./target/debug/leona_context_broker:/usr/local/bin/leona_context_broker:ro
   networks:
     - swarm
 

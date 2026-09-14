@@ -1,6 +1,6 @@
-# Cognets Broker
+# Leona Context Broker
 
-`cognets_broker` is modular NGSI-LD Context Broker written in Rust with `actix-web`.
+`leona_context_broker` is modular NGSI-LD Context Broker written in Rust with `actix-web`.
 
 Current runtime pieces:
 
@@ -165,7 +165,7 @@ Environment variables:
 
 - `BROKER_HOST`: bind host, default `127.0.0.1`
 - `BROKER_PORT`: bind port, default `8080`
-- `BROKER_ID`: broker identifier, default `cognets-broker`
+- `BROKER_ID`: broker identifier, default `leona-context-broker`
 - `BROKER_PUBLIC_ENDPOINT`: public broker base URL, default `http://127.0.0.1:8080/ngsi-ld/v1`
 - `BROKER_DEFRADB_URL`: DefraDB GraphQL endpoint, default `http://127.0.0.1:9181/api/v0/graphql`
 - `BROKER_DEFRADB_TIMEOUT_MS`: DefraDB storage HTTP timeout in milliseconds, default `30000`
@@ -237,7 +237,7 @@ Swarm test details:
 - asserts every broker observes replicated entity state and emits one local notification for each lifecycle step
 - measures per-node data propagation time and compares it with notification receipt time for create, update, and delete
 - runs concurrent inserts from all 10 brokers and validates both final consistency and propagation/notification latency distributions
-- uses existing host `target/debug/cognets_broker` binary and builds it automatically if missing
+- uses existing host `target/debug/leona_context_broker` binary and builds it automatically if missing
 - set `KEEP_SWARM=1` to inspect running containers after the script exits
 
 Subscription storage policy:

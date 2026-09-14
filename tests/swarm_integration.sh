@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJECT_NAME="${SWARM_PROJECT:-cognets-swarm}"
+PROJECT_NAME="${SWARM_PROJECT:-leona-swarm}"
 KEEP_SWARM="${KEEP_SWARM:-0}"
 BROKER_COUNT=10
 ENTITY_ID="urn:ngsi-ld:Vehicle:swarm-e2e"

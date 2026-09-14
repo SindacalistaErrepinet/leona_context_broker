@@ -98,14 +98,14 @@ KEEP_SWARM=1 bash tests/swarm_integration.sh
 Inspect logs:
 
 ```bash
-docker-compose -f docker-compose.yml -p cognets-swarm logs broker1
-docker-compose -f docker-compose.yml -p cognets-swarm logs defra1
+docker-compose -f docker-compose.yml -p leona-swarm logs broker1
+docker-compose -f docker-compose.yml -p leona-swarm logs defra1
 ```
 
 Remove swarm containers and volumes:
 
 ```bash
-docker-compose -f docker-compose.yml -p cognets-swarm down -v --remove-orphans
+docker-compose -f docker-compose.yml -p leona-swarm down -v --remove-orphans
 ```
 
 ## Success Signal

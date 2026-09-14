@@ -1,6 +1,6 @@
 # Implementation Status
 
-This document tracks the current code state of `cognets_broker` after the MongoDB refactor and the decentralized swarm-sync pass.
+This document tracks the current code state of `leona_context_broker` after the MongoDB refactor and the decentralized swarm-sync pass.
 
 ## Implemented
 
